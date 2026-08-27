@@ -1,0 +1,288 @@
+openapi: 3.1.0
+
+info:
+  title: KeluarBerapa API
+  version: 0.1.0
+  description: |
+    REST API for KeluarBerapa, a multi-user expense tracker.
+
+    **Contract status.** This document describes only what is implemented.
+    Stage 1 delivers the operational endpoints; authentication, the WhatsApp
+    webhook and the dashboard endpoints are added to this file by the stages
+    that implement them. Per `ai_instructions.md` section 1.10 the contract is
+    never changed silently: an endpoint appears here in the same change that
+    implements it.
+
+    **Error format.** Every error response uses the single envelope defined in
+    `architecture.md` section 5:
+
+    ```json
+    { "error": "not_found", "message": "The requested resource was not found." }
+    ```
+
+    `error` is a stable machine-readable code; `message` is safe to display.
+
+    **Money and time.** Amounts are integers in the smallest unit of IDR, which
+    has no minor unit, so `25000` means Rp25.000. Timestamps are RFC 3339 in
+    UTC; the dashboard renders them in the user's timezone, by default
+    `Asia/Jakarta`.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Operations
+    description: |
+      Liveness and readiness probes. They are unauthenticated, live outside
+      `/api/v1`, and expose no user data.
+
+paths:
+  /health:
+    get:
+      tags: [Operations]
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Reports that the process is running. It deliberately checks no
+        dependency, so a slow database cannot cause an orchestrator to restart
+        an otherwise healthy process. Use `/ready` to decide whether to send
+        traffic.
+      security: []
+      responses:
+        "200":
+          description: The process is alive.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+              example:
+                status: ok
+                service: keluarberapa-api
+                version: 0.1.0
+                env: development
+                time: "2026-01-15T03:24:11Z"
+                uptime_seconds: 3612
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /ready:
+    get:
+      tags: [Operations]
+      operationId: getReady
+      summary: Readiness probe
+      description: |
+        Verifies that every dependency the API needs is usable. Stage 1 checks
+        the PostgreSQL connection, bounded by `DATABASE_HEALTH_TIMEOUT`.
+
+        Returns `503` when a dependency is unavailable so a load balancer can
+        drain the instance. The failure body carries no driver detail — a
+        connection error can name internal hosts — and the full error is written
+        to the log under the same `X-Request-Id`.
+      security: []
+      responses:
+        "200":
+          description: Every dependency is usable.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyStatus"
+              example:
+                status: ready
+                checks:
+                  database:
+                    status: ok
+                    latency_ms: 3
+        "503":
+          description: At least one dependency is unavailable.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/XRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyError"
+              example:
+                error: service_unavailable
+                message: 'Dependency "database" is not available.'
+                checks:
+                  database:
+                    status: error
+                    latency_ms: 2000
+                    error: unreachable
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+components:
+  headers:
+    XRequestId:
+      description: |
+        Correlation id for this request. A well-formed inbound `X-Request-Id`
+        (8-64 characters of `A-Za-z0-9._:-`) is reused so a trace survives
+        across services; anything else is replaced with a generated value.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9._:-]{8,64}$"
+
+  schemas:
+    Error:
+      type: object
+      description: The standard error envelope (architecture.md section 5).
+      required: [error, message]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code.
+          enum:
+            - not_found
+            - method_not_allowed
+            - internal_error
+            - service_unavailable
+        message:
+          type: string
+          description: Human-readable explanation, safe to display to a user.
+
+    HealthStatus:
+      type: object
+      required: [status, service, version, env, time, uptime_seconds]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+          description: Value of APP_NAME.
+        version:
+          type: string
+          description: Value of APP_VERSION.
+        env:
+          type: string
+          enum: [development, test, staging, production]
+        time:
+          type: string
+          format: date-time
+          description: Server time in UTC.
+        uptime_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+
+    DependencyCheck:
+      type: object
+      required: [status, latency_ms]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          description: |
+            `skipped` only appears in a build wired without that dependency.
+          enum: [ok, error, skipped]
+        latency_ms:
+          type: integer
+          format: int64
+          minimum: 0
+        error:
+          type: string
+          description: |
+            Short, non-revealing reason, present only when status is `error`.
+            Driver detail is written to the log instead.
+
+    ReadyStatus:
+      type: object
+      required: [status, checks]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ready]
+        checks:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/DependencyCheck"
+          propertyNames:
+            examples: [database]
+
+    ReadyError:
+      description: |
+        The standard error envelope plus per-dependency detail, so an operator
+        can see which check failed without leaving the probe.
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          required: [checks]
+          properties:
+            checks:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/DependencyCheck"
+
+  responses:
+    MethodNotAllowed:
+      description: The path exists but does not accept this method.
+      headers:
+        Allow:
+          description: Methods this path accepts.
+          schema:
+            type: string
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: method_not_allowed
+            message: Method POST is not allowed for this endpoint.
+
+    NotFound:
+      description: |
+        No such resource. Also returned for a resource that exists but belongs
+        to another user: per `ai_instructions.md` section 3 the two cases must be
+        indistinguishable.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: not_found
+            message: The requested resource was not found.
+
+    InternalError:
+      description: Unexpected server error. Detail is logged, never returned.
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/XRequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: internal_error
+            message: An unexpected error occurred. Please try again.
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Declared for the endpoints added by the authentication stage. The
+        access token's subject is the only source of the caller's user id; a
+        `user_id` supplied in a request body or query string is never trusted
+        (ai_instructions.md section 1.7).
+
+# Business endpoints require a bearer token; the operational probes above
+# override this with `security: []`.
+security:
+  - bearerAuth: []

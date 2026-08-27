@@ -1,0 +1,22 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.test
+*.out
+
+# Go coverage
+coverage.out
+coverage.html
+
+# Editors and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
