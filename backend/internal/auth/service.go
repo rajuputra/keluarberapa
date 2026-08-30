@@ -60,7 +60,7 @@ type AccessToken struct {
 	ExpiresAt time.Time
 }
 
-// AccessTokenIssuer mints the access token returned by Login and Refresh.
+// AccessTokenIssuer mints and verifies access tokens.
 //
 // The concrete JWT implementation is deliberately not here. Signing and
 // verification have to agree on the claim set exactly, so they belong in one
@@ -68,6 +68,7 @@ type AccessToken struct {
 // is complete and testable against a fake issuer.
 type AccessTokenIssuer interface {
 	IssueAccessToken(u user.User, now time.Time) (AccessToken, error)
+	ParseAccessToken(tokenString string) (*AccessTokenClaims, error)
 }
 
 // Session is what a successful login or refresh produces.

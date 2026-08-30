@@ -6,7 +6,14 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+
+	"github.com/rajuputra/keluarberapa/backend/internal/user"
 )
 
 // refreshTokenBytes is the amount of entropy in a refresh token: 256 bits.
@@ -47,4 +54,101 @@ func HashRefreshToken(token string) string {
 // comparison happens in Go rather than in a WHERE clause.
 func EqualTokenHash(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// JWT errors.
+var (
+	ErrInvalidAccessToken = errors.New("access token is invalid or expired")
+	ErrMissingAccessToken = errors.New("access token is required")
+)
+
+// AccessTokenClaims are the claims embedded in the access token JWT.
+//
+// The subject is the user id. The issuer and audience are fixed per
+// configuration so that a token minted for one deployment cannot be used in
+// another. Only the subject is required by the middleware; the rest are
+// defensive.
+type AccessTokenClaims struct {
+	jwt.RegisteredClaims
+}
+
+// JWTAccessTokenIssuer issues and verifies short-lived access tokens using JWT.
+//
+// The concrete implementation uses HS256 with the secret from config. Both
+// operations live here so the claim set can never drift between signing and
+// verification.
+type JWTAccessTokenIssuer struct {
+	secret []byte
+	issuer string
+	ttl    time.Duration
+}
+
+// NewAccessTokenIssuer returns an issuer configured with the given secret,
+// issuer string and TTL. secret must be at least 32 bytes.
+func NewAccessTokenIssuer(secret string, issuer string, ttl time.Duration) (*JWTAccessTokenIssuer, error) {
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("access token secret must be at least 32 bytes, got %d", len(secret))
+	}
+	if issuer == "" {
+		return nil, errors.New("issuer must not be empty")
+	}
+	if ttl <= 0 {
+		return nil, errors.New("ttl must be positive")
+	}
+	return &JWTAccessTokenIssuer{
+		secret: []byte(secret),
+		issuer: issuer,
+		ttl:    ttl,
+	}, nil
+}
+
+// IssueAccessToken mints a new access token for the given user.
+func (i *JWTAccessTokenIssuer) IssueAccessToken(u user.User, now time.Time) (AccessToken, error) {
+	claims := AccessTokenClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   u.ID.String(),
+			Issuer:    i.issuer,
+			Audience:  jwt.ClaimStrings{i.issuer},
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString(i.secret)
+	if err != nil {
+		return AccessToken{}, fmt.Errorf("sign access token: %w", err)
+	}
+	return AccessToken{
+		Token:     signed,
+		ExpiresAt: now.Add(i.ttl),
+	}, nil
+}
+
+// ParseAccessToken verifies the token and returns its claims.
+//
+// The token must be signed with the same secret, have the expected issuer
+// and audience, and not be expired. The subject is returned as a UUID.
+func (i *JWTAccessTokenIssuer) ParseAccessToken(tokenString string) (*AccessTokenClaims, error) {
+	if tokenString == "" {
+		return nil, ErrMissingAccessToken
+	}
+	token, err := jwt.ParseWithClaims(tokenString, &AccessTokenClaims{}, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return i.secret, nil
+	}, jwt.WithIssuer(i.issuer), jwt.WithAudience(i.issuer), jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidAccessToken, err)
+	}
+	claims, ok := token.Claims.(*AccessTokenClaims)
+	if !ok || !token.Valid {
+		return nil, ErrInvalidAccessToken
+	}
+	return claims, nil
+}
+
+// UserIDFromClaims extracts the user ID from parsed claims.
+func UserIDFromClaims(claims *AccessTokenClaims) (uuid.UUID, error) {
+	return uuid.Parse(claims.Subject)
 }

@@ -14,10 +14,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/rajuputra/keluarberapa/backend/internal/auth"
 	"github.com/rajuputra/keluarberapa/backend/internal/config"
 	"github.com/rajuputra/keluarberapa/backend/internal/database"
 	httpapi "github.com/rajuputra/keluarberapa/backend/internal/http"
 	"github.com/rajuputra/keluarberapa/backend/internal/logging"
+	"github.com/rajuputra/keluarberapa/backend/internal/user"
+	"github.com/rajuputra/keluarberapa/backend/internal/whatsapp"
 )
 
 // migrateTimeout bounds an automatic migration run at startup.
@@ -68,6 +71,46 @@ func run() error {
 		}
 	}
 
+	// Repositories
+	userRepo := user.NewRepository(db)
+	refreshTokenRepo := auth.NewRefreshTokenRepository(db)
+	whatsappAccountRepo := whatsapp.NewAccountRepository(db)
+
+	// Password hasher
+	hasher := auth.DefaultHasher()
+
+	// JWT access token issuer
+	accessTokenIssuer, err := auth.NewAccessTokenIssuer(
+		string(cfg.JWT.AccessSecret),
+		cfg.JWT.Issuer,
+		cfg.JWT.AccessTTL,
+	)
+	if err != nil {
+		return fmt.Errorf("create access token issuer: %w", err)
+	}
+
+	// Services
+	authService, err := auth.NewService(auth.ServiceConfig{
+		Users:        userRepo,
+		Tokens:       refreshTokenRepo,
+		Hasher:       hasher,
+		AccessTokens: accessTokenIssuer,
+		RefreshTTL:   cfg.JWT.RefreshTTL,
+		Logger:       logger,
+	})
+	if err != nil {
+		return fmt.Errorf("create auth service: %w", err)
+	}
+
+	userService, err := user.NewService(user.ServiceConfig{
+		Users:            userRepo,
+		WhatsAppAccounts: whatsappAccountRepo,
+		Logger:           logger,
+	})
+	if err != nil {
+		return fmt.Errorf("create user service: %w", err)
+	}
+
 	// Bind before announcing readiness: a taken port must fail startup rather
 	// than surface later as a confusing shutdown.
 	listener, err := net.Listen("tcp", cfg.HTTP.Addr())
@@ -77,9 +120,12 @@ func run() error {
 
 	server := &http.Server{
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			Config: cfg,
-			Logger: logger,
-			DB:     db,
+			Config:       cfg,
+			Logger:       logger,
+			AuthService:  authService,
+			UserService:  userService,
+			AccessTokens: accessTokenIssuer,
+			DB:           db,
 		}),
 		ReadHeaderTimeout: cfg.HTTP.ReadTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,

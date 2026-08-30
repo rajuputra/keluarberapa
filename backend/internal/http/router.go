@@ -5,15 +5,20 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rajuputra/keluarberapa/backend/internal/auth"
 	"github.com/rajuputra/keluarberapa/backend/internal/config"
 	"github.com/rajuputra/keluarberapa/backend/internal/middleware"
+	"github.com/rajuputra/keluarberapa/backend/internal/user"
 )
 
 // Deps are the collaborators the router needs. Later stages add the auth,
 // transaction and dashboard services here.
 type Deps struct {
-	Config *config.Config
-	Logger *slog.Logger
+	Config       *config.Config
+	Logger       *slog.Logger
+	AuthService  *auth.Service
+	UserService  *user.Service
+	AccessTokens auth.AccessTokenIssuer
 	// DB backs the /ready probe. It may be nil in tests.
 	DB Pinger
 }
@@ -47,6 +52,38 @@ func NewRouter(deps Deps) http.Handler {
 	for _, rt := range routes {
 		mux.HandleFunc(rt.method+" "+rt.path, rt.handler)
 		methodsByPath[rt.path] = append(methodsByPath[rt.path], rt.method)
+	}
+
+	// Auth endpoints (public)
+	if deps.AuthService != nil && deps.AccessTokens != nil {
+		authHandler := NewAuthHandler(AuthHandlerConfig{
+			Service: deps.AuthService,
+			Logger:  logger,
+		})
+		authHandler.RegisterRoutes(mux)
+		for _, path := range []string{
+			"/api/v1/auth/register",
+			"/api/v1/auth/login",
+			"/api/v1/auth/refresh",
+			"/api/v1/auth/logout",
+		} {
+			methodsByPath[path] = []string{http.MethodPost, http.MethodOptions}
+		}
+	}
+
+	// User endpoints (protected)
+	if deps.UserService != nil && deps.AccessTokens != nil {
+		userHandler := NewUserHandler(UserHandlerConfig{
+			Service:      deps.UserService,
+			AccessTokens: deps.AccessTokens,
+			Logger:       logger,
+		})
+		userHandler.RegisterRoutes(mux)
+		for _, path := range []string{
+			"/api/v1/me",
+		} {
+			methodsByPath[path] = []string{http.MethodGet, http.MethodPatch, http.MethodOptions}
+		}
 	}
 
 	// The catch-all makes every unmatched request answer in the standard error

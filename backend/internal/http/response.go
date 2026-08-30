@@ -7,6 +7,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 )
@@ -65,4 +66,24 @@ func writeRawError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// DecodeJSON decodes the request body as JSON into dst.
+//
+// Returns an error if the body is not valid JSON, is empty, or contains
+// unknown fields (when using a strict decoder).
+func DecodeJSON(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return errors.New("request body is empty")
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	// Ensure the body is fully consumed.
+	if dec.More() {
+		return errors.New("request body contains extra data after JSON object")
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"github.com/rajuputra/keluarberapa/backend/internal/auth"
@@ -233,6 +234,19 @@ func (f *fakeIssuer) IssueAccessToken(u user.User, now time.Time) (auth.AccessTo
 	return auth.AccessToken{
 		Token:     fmt.Sprintf("access-token-for-%s", u.ID),
 		ExpiresAt: now.Add(ttl),
+	}, nil
+}
+
+func (f *fakeIssuer) ParseAccessToken(tokenString string) (*auth.AccessTokenClaims, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	// For testing, we just return a dummy claim with the subject from the token
+	// In real tests, we'd parse the actual token
+	return &auth.AccessTokenClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject: "550e8400-e29b-41d4-a716-446655440000",
+		},
 	}, nil
 }
 

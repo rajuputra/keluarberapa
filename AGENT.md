@@ -12,13 +12,13 @@ dashboard shows monthly summaries.
 **This is a spec-driven repository.** Five markdown files at the root are the
 contract, not documentation-after-the-fact:
 
-| File | Role |
-| --- | --- |
-| `ai_instructions.md` | Hard rules + definition of done. Read this first. |
-| `architecture.md` | Non-negotiable tech decisions, folder layout, DB schema |
-| `prd.md` | Product requirements, message format, amount/category rules |
-| `user_stories.md` | Acceptance criteria |
-| `design_guidelines.md` | Frontend direction (frontend not started) |
+| File                   | Role                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| `ai_instructions.md`   | Hard rules + definition of done. Read this first.           |
+| `architecture.md`      | Non-negotiable tech decisions, folder layout, DB schema     |
+| `prd.md`               | Product requirements, message format, amount/category rules |
+| `user_stories.md`      | Acceptance criteria                                         |
+| `design_guidelines.md` | Frontend direction (frontend not started)                   |
 
 Rules from `ai_instructions.md` that constrain almost every change:
 
@@ -175,7 +175,7 @@ condition. The foundations, and what to preserve:
 - All SQL binds parameters (`$1`, `$2`, …). Never build a query by concatenation.
 - **404 and "not yours" must be indistinguishable.** `httpapi.notFound` returns
   the same message either way.
-- When adding a repository: put `user_id = $1` in *every* statement, including
+- When adding a repository: put `user_id = $1` in _every_ statement, including
   `UPDATE` and `DELETE` by id, and take the id from the JWT context only.
 - `internal/database/schema_test.go` is where these claims are enforced — it
   asserts that scoped `SELECT`/`UPDATE`/soft-`DELETE` all miss another user's
@@ -205,8 +205,7 @@ condition. The foundations, and what to preserve:
   Error codes are constants in `internal/http/response.go`.
 - `router.go` builds routes from a **`[]route` table**, then derives the
   path→methods map from it. This exists because the `/` catch-all (which makes
-  unmatched requests return the JSON envelope instead of `net/http`'s plain-text
-  404) shadows ServeMux's built-in 405. Add routes to the table, not with a bare
+  unmatched requests return the JSON envelope instead of `net/http`'s plain-text 404) shadows ServeMux's built-in 405. Add routes to the table, not with a bare
   `mux.HandleFunc`.
 - `/health` is liveness and **must never touch a dependency** — a slow database
   must not get a healthy process restarted. `/ready` does the dependency checks
@@ -214,7 +213,7 @@ condition. The foundations, and what to preserve:
   can name internal hosts); the full error goes to the log under the same
   `X-Request-Id`.
 - Middleware order in `NewRouter` is outermost-first: RequestID → RequestLogger →
-  Recovery → CORS. Recovery sits *inside* the logger so the 500 it writes gets
+  Recovery → CORS. Recovery sits _inside_ the logger so the 500 it writes gets
   logged.
 
 ### Logging
@@ -232,7 +231,7 @@ condition. The foundations, and what to preserve:
 
 `httpapi.Serve` owns the server lifecycle: it drains in-flight requests within
 `HTTP_SHUTDOWN_TIMEOUT`, then closes what remains. `main` creates the listener
-with `net.Listen` *before* logging that it is up, so a taken port fails startup.
+with `net.Listen` _before_ logging that it is up, so a taken port fails startup.
 `db.Close()` is deferred in `main` and therefore runs only after `Serve` returns,
 so no handler can be mid-query.
 
@@ -242,7 +241,7 @@ signals.
 
 ## Open question
 
-`prd.md` says a WhatsApp number is registered and then verified, but not *how*.
+`prd.md` says a WhatsApp number is registered and then verified, but not _how_.
 No verification-code columns were invented. The mechanism is a product decision
 that must be settled before the WhatsApp identity stage, and it will need
 migration `002`.
